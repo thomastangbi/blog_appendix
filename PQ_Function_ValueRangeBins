@@ -1,0 +1,59 @@
+let ValuRangeBins =
+    (
+        EndOfValueRange as number, 
+        LastBin as number,  
+        NumberOfBins as number, 
+        BinSize as number,
+        NumberOfDecimals as number
+    )=>
+    let
+        Bins = List.Buffer(List.Numbers(BinSize, NumberOfBins, BinSize)),
+        Multiplier = Number.From("1"&Text.End("100000000",NumberOfDecimals)),
+        #"List of Values" = List.Numbers(1/Multiplier,EndOfValueRange*Multiplier, 1/Multiplier),
+        #"Converted to Table" = Table.FromList( #"List of Values", Splitter.SplitByNothing(), type table [Value = number], null, ExtraValues.Error),
+        #"Rounded Off" = Table.TransformColumns( #"Converted to Table", {{"Value", each Number.Round(_, NumberOfDecimals), type number}}),
+        #"Added Bins" = Table.AddColumn(#"Rounded Off", "Bins", each 
+            let aValue = [Value],
+                Bins = List.Transform( Bins, each
+                    let 
+                        Ceiling = Number.RoundAwayFromZero(aValue / _, 0),
+                        BinName = "Bin Size "&Text.From(_),
+                        SortName = BinName & " Sort",
+                        Top = Ceiling * _,
+                        Buttom = Top - _ + 1,
+                        ValueBin = if Buttom = 1 then "0-" & Text.From(Top) else if aValue >= LastBin then ">" & Text.From(LastBin) else Text.From(Buttom) & "-" & Text.From(Top),
+                        SortValue = if Text.Start(ValueBin, 1) = ">" then EndOfValueRange + 1 else Number.From(Text.AfterDelimiter(ValueBin, "-")),
+                        Record = [a = ValueBin, b = SortValue],
+                        RenameFields = Record.RenameFields(Record,{{"a",BinName},{"b",SortName}}),
+                        Output = Table.FromRecords({RenameFields})
+                    in
+                    Output) 
+            in Bins
+        ),
+        #"Expanded BinsLists" = Table.ExpandListColumn(#"Added Bins", "Bins"),
+        ColNames = Table.ColumnNames ( Table.Combine ( List.Transform( Bins, each 
+            let 
+                BinName = "Bin Size "&Text.From(_), 
+                SortName = BinName & " Sort",Record = [a = 1, b = 1],
+                RenameFields = Record.RenameFields(Record,{{"a",BinName},{"b",SortName}}), 
+                Output = Table.FromRecords({RenameFields}) 
+            in Output ))),
+        #"Expanded Bins1" = Table.ExpandTableColumn(#"Expanded BinsLists", "Bins", ColNames ),
+        #"Unpivoted Other Columns" = Table.UnpivotOtherColumns(#"Expanded Bins1", {"Value"}, "Attribute", "Values"),
+        #"Pivoted Column" = Table.Pivot(#"Unpivoted Other Columns", List.Distinct(#"Unpivoted Other Columns"[Attribute]), "Attribute", "Values"),
+        #"Changed Type" = Table.TransformColumnTypes(#"Pivoted Column",List.Transform(List.Select(ColNames, each Text.EndsWith(_," Sort")),each {_, Int64.Type})),
+        #"Changed Type1" = Table.TransformColumnTypes(#"Changed Type",List.Transform(List.Select(ColNames, each not Text.EndsWith(_," Sort")),each {_, type text}))
+    in
+    #"Changed Type1",
+        documentation = [
+        Documentation.Name = " ValuRangeBins ",
+        Documentation.Description = " A table consisting of a values column and one or more numeric range bin columns depending on the entered parameters "
+    ]
+in
+    Value.ReplaceType(
+        ValuRangeBins,
+        Value.ReplaceMetadata(
+            Value.Type(ValuRangeBins),
+            documentation
+        )
+    )
